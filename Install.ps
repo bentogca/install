@@ -53,25 +53,25 @@ $ADPassword = Read-Host -AsSecureString "Senha"
 $ADCredential = New-Object System.Management.Automation.PSCredential($ADUser, $ADPassword)
 
 # ----------------------------------------------------
-# 2. CONFIGURAR REDE (IP Fixo e DNS) - SELEÇÃO MANUAL
+# 2. CONFIGURAR REDE (IP Fixo e DNS) - SELEÇÃO MANUAL AMPLA E TOLERANTE A ERROS
 # ----------------------------------------------------
-Write-Host "`n--- 2. CONFIGURANDO REDE IP FIXO (Seleção Manual) ---"
+Write-Host "`n--- 2. CONFIGURANDO REDE IP FIXO (Seleção Manual Ampla) ---"
 
-# Lista as interfaces de rede Ethernet válidas para escolha
+# Lista TODAS as interfaces de rede detectáveis, excluindo apenas Virtual e Loopback, para escolha.
 $Adapters = Get-NetAdapter | Where-Object { 
-    $_.InterfaceType -eq "Ethernet" -and $_.Name -notlike "*Virtual*" -and $_.Name -notlike "*Wi-Fi*" -and $_.Name -notlike "*Loopback*" 
-} | Select-Object Name, Status, MacAddress
+    $_.Name -notlike "*Virtual*" -and $_.Name -notlike "*Loopback*" 
+} | Select-Object Name, Status, MacAddress, InterfaceType
 
 if (-not $Adapters) {
-    Write-Error "ERRO FATAL: Nenhuma interface de rede Ethernet válida foi encontrada. O script não pode continuar sem configuração de rede."
-    exit 1
+    Write-Host "AVISO: Nenhuma interface de rede foi detectada no sistema. O script CONTINUARÁ, mas as etapas de rede falharão."
+    # Não usa 'exit 1' para forçar a continuidade.
 }
 
 Write-Host "Interfaces de Rede Encontradas (Escolha a principal):"
 $Adapters | Format-Table -AutoSize
 
 # Pede ao usuário para selecionar pelo nome
-$SelectedName = Read-Host "Digite o NOME EXATO da interface que deseja configurar (ex: Ethernet)"
+$SelectedName = Read-Host "Digite o NOME EXATO da interface que deseja configurar (ex: Ethernet ou Wi-Fi)"
 
 # Tenta encontrar a interface pelo nome fornecido
 $Interface = Get-NetAdapter -Name $SelectedName -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -93,13 +93,13 @@ if ($Interface) {
         
         Write-Host "✅ Rede configurada com sucesso!"
     } catch {
-        Write-Error "ERRO GRAVE: Falha ao aplicar o IP Fixo ou DNS. Verifique as permissões ou se o IP não está em uso."
-        exit 1
+        Write-Error "ERRO GRAVE: Falha ao aplicar o IP Fixo ou DNS. O script continuará a execução."
+        # Não usa 'exit 1' para forçar a continuidade.
     }
 
 } else {
-    Write-Error "ERRO FATAL: O nome digitado '$SelectedName' não corresponde a nenhuma interface ou ela não é uma placa Ethernet válida."
-    exit 1
+    Write-Error "AVISO: O nome digitado '$SelectedName' não corresponde a nenhuma interface ou não foi possível configurá-la. O script CONTINUARÁ."
+    # Não usa 'exit 1' para forçar a continuidade.
 }
 
 # ----------------------------------------------------
@@ -145,6 +145,7 @@ try {
     Write-Host "Cópia de arquivos concluída. Programas prontos para o novo usuário de domínio."
 } catch {
     Write-Error "ERRO FATAL: Falha ao acessar ou copiar arquivos de $NetworkSource. O script não pode continuar."
+    # Mantemos o exit aqui, pois sem a cópia dos arquivos o resto do script não faz sentido.
     exit 1
 }
 
