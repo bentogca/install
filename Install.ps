@@ -15,8 +15,8 @@ $NetworkShareName = "Conexo"
 $NetworkSourcePath = "\func\TI\TI-Carlos\apps"
 $MAPPED_DRIVE_LETTER = "F"
 $FullUNCPathToShare = "\\$NetworkSourceServer\$NetworkShareName"
-# CORRIGIDO: Uso de ${} para tratar o ':' corretamente.
-$NetworkSource = "${MAPPED_DRIVE_LETTER}:\$NetworkSourcePath"
+# CORRIGIDO: Uso de operador '+' (concatenação) para evitar erro de análise de drive.
+$NetworkSource = $MAPPED_DRIVE_LETTER + ":\" + $NetworkSourcePath
 
 # Configuração de Rede e AD
 $IP_Address = "172.16.0.95"
@@ -90,7 +90,7 @@ if ($Interface) {
 # ----------------------------------------------------
 # 3. MAPEAMENTO DO DRIVE F:
 # ----------------------------------------------------
-Write-Host "`n--- 3. MAPEANDO DRIVE ${MAPPED_DRIVE_LETTER} ---"
+Write-Host "`n--- 3. MAPEANDO DRIVE $MAPPED_DRIVE_LETTER ---"
 
 try {
     # Remove qualquer mapeamento F: existente
@@ -98,8 +98,8 @@ try {
     
     # Mapeia o drive F:
     (New-Object -ComObject WScript.Network).MapNetworkDrive($MAPPED_DRIVE_LETTER, $FullUNCPathToShare)
-    # CORRIGIDO: Uso de ${} na variável MAPPED_DRIVE_LETTER
-    Write-Host "Drive ${MAPPED_DRIVE_LETTER}: mapeado para $FullUNCPathToShare com sucesso." 
+    # CORRIGIDO: Concatenação segura para exibir a letra do drive
+    Write-Host "Drive " + $MAPPED_DRIVE_LETTER + ": mapeado para $FullUNCPathToShare com sucesso." 
 
 } catch {
     Write-Error "ERRO: Falha ao mapear o drive $MAPPED_DRIVE_LETTER. O script irá tentar acessar o caminho mesmo assim."
