@@ -25,9 +25,6 @@ $DestApps       = "C:\Users\Public\Desktop\apps"
 # Caminho UNC
 $UNC = "\\$NetworkSourceServer\$NetworkShareName"
 
-# Caminho origem no drive F
-$NetworkSource = Join-Path -Path $MappedDrive -ChildPath $NetworkSourcePath
-
 # -------------------------------------------------------------
 # 1. NOME DO USUARIO / NOME DA MAQUINA
 # -------------------------------------------------------------
@@ -50,21 +47,45 @@ $ADPassword = Read-Host -AsSecureString "Senha"
 
 $ADCredential = New-Object System.Management.Automation.PSCredential ($ADUser, $ADPassword)
 
+# Converte senha para texto claro para mapear o drive (WScript.Network nao aceita SecureString)
+$BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($ADPassword)
+$PlainPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringUni($BSTR)
+
 # -------------------------------------------------------------
-# 3. MAPEAR DRIVE F
+# 3. MAPEAR DRIVE F (COM CREDENCIAIS) OU USAR UNC
 # -------------------------------------------------------------
 Write-Host "`n--- 3. MAPEANDO DRIVE F ---" -ForegroundColor Yellow
+
+$UsarUNC = $false
+$NetworkSource = $null
 
 try {
     $WshNetwork = New-Object -ComObject WScript.Network
     $WshNetwork.RemoveNetworkDrive($MappedDrive, $true, $true) 2>$null
-    $WshNetwork.MapNetworkDrive($MappedDrive, $UNC)
+
+    Write-Host "Tentando mapear $MappedDrive para $UNC com usuario $ADUser ..." -ForegroundColor Cyan
+    $WshNetwork.MapNetworkDrive($MappedDrive, $UNC, $false, $ADUser, $PlainPassword)
 
     Write-Host "Drive F mapeado com sucesso -> $UNC" -ForegroundColor Green
+
+    # Se mapeou, origem vira F:\func\...
+    $NetworkSource = Join-Path -Path $MappedDrive -ChildPath $NetworkSourcePath
 }
 catch {
-    Write-Host "ERRO: Nao foi possivel mapear F. Tentando acessar via UNC." -ForegroundColor Red
+    Write-Host "ERRO ao mapear F: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "Tentando usar caminho UNC diretamente..." -ForegroundColor Yellow
+    $UsarUNC = $true
 }
+
+# Limpa senha em texto claro da memoria
+[System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($BSTR) | Out-Null
+$PlainPassword = $null
+
+if ($UsarUNC) {
+    $NetworkSource = Join-Path -Path $UNC -ChildPath $NetworkSourcePath
+}
+
+Write-Host "Origem de arquivos definida como: $NetworkSource" -ForegroundColor Cyan
 
 # -------------------------------------------------------------
 # 4. COPIAR ARQUIVOS
@@ -99,15 +120,20 @@ catch {
 }
 
 # -------------------------------------------------------------
-# 5. INGRESSAR NO DOMINIO E REINICIAR
+# 5. INGRESSAR NO DOMINIO (SEM REINICIAR AUTOMATICO)
 # -------------------------------------------------------------
 Write-Host "`n--- 5. INGRESSANDO NO DOMINIO ---" -ForegroundColor Yellow
 
 try {
-    Add-Computer -DomainName $Domain_Name -NewName $NewComputerName -Credential $ADCredential -Restart -Force
+    Add-Computer -DomainName $Domain_Name -NewName $NewComputerName -Credential $ADCredential -ErrorAction Stop
+    Write-Host "Computador ingressado no dominio com sucesso." -ForegroundColor Green
+    Write-Host "Reinicie o equipamento manualmente para aplicar as alteracoes." -ForegroundColor Yellow
 }
 catch {
     Write-Host "ERRO: Nao foi possivel ingressar no dominio." -ForegroundColor Red
     Write-Host $_.Exception.Message -ForegroundColor Red
     Exit 1
 }
+
+Write-Host "`nScript concluido." -ForegroundColor Cyan
+Read-Host "Pressione ENTER para sair"
