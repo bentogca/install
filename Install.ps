@@ -1,124 +1,127 @@
 # ====================================================================
-# SCRIPT DE AUTO INSTALAÇÃO, SEM CONFIGURAÇÃO DE REDE
-# --------------------------------------------------------------------
-# DEVE SER EXECUTADO COMO ADMINISTRADOR!
-# O script irá nomear a máquina, mapear o drive F:, copiar os arquivos, 
-# juntar ao AD e REINICIAR.
-# A CONFIGURAÇÃO DE IP (SEÇÃO 2) FOI REMOVIDA.
+#  SCRIPT DE AUTO INSTALAÇÃO - SEM CONFIGURAÇÃO DE REDE
+#  DEVE SER EXECUTADO COMO ADMINISTRADOR!
+#  Funções:
+#   - Nomear a máquina
+#   - Mapear F:
+#   - Copiar ERP / RETAGUARDA
+#   - Copiar apps para Desktop Público
+#   - Ingressar no domínio
+#   - Reiniciar
 # ====================================================================
 
-# --------------------------------------------------------------------
-# --- CONFIGURAÇÕES FIXAS DA INFRAESTRUTURA ---
-# --------------------------------------------------------------------
-# Configuração do Mapeamento F:
+Clear-Host
+Write-Host "=============================================" -ForegroundColor Cyan
+Write-Host "      ASSISTENTE DE CONFIGURAÇÃO - INÍCIO     " -ForegroundColor Cyan
+Write-Host "=============================================" -ForegroundColor Cyan
+
+# -------------------------------------------------------------
+# CONFIGURAÇÕES FIXAS
+# -------------------------------------------------------------
 $NetworkSourceServer = "172.16.2.73"
-$NetworkShareName = "Conexo"
-$NetworkSourcePath = "\func\TI\TI-Carlos\apps"
-$MAPPED_DRIVE_LETTER = "F"
-$FullUNCPathToShare = "\\$NetworkSourceServer\$NetworkShareName"
-# Uso de operador '+' (concatenação) para evitar erro de análise de drive.
-$NetworkSource = $MAPPED_DRIVE_LETTER + ":\" + $NetworkSourcePath
+$NetworkShareName    = "Conexo"
+$NetworkSourcePath   = "func\TI\TI-Carlos\apps"  # sem "\" para evitar erros de path
+$MappedDrive         = "F:"
+$Domain_Name         = "atacado.local"
+$AD_Server_IP        = "172.16.2.85"
 
-# Configuração de Rede e AD (Variáveis mantidas para o Domain Join)
-$IP_Address = "172.16.0.95" # Não será aplicado na interface
-$Subnet_Mask_CIDR = 24
-$Gateway = "172.16.0.254"
-$Domain_Name = "atacado.local"
-$AD_Server_IP = "172.16.2.85" 
-
-# --- VARIÁVEIS DE DESTINO ---
-$DestERP = "C:\erp"
+# Caminhos de destino
+$DestERP        = "C:\erp"
 $DestRetaguarda = "C:\retaguarda"
-# Copia para a área de trabalho PÚBLICA (acessível por todos os usuários do domínio)
-$DestApps = "C:\Users\Public\Desktop\apps" 
+$DestApps       = "C:\Users\Public\Desktop\apps"
 
-# ----------------------------------------------------
-# 1. COLETAR INFORMAÇÕES DO USUÁRIO
-# ----------------------------------------------------
-Write-Host "============================================="
-Write-Host "  ASSISTENTE DE CONFIGURAÇÃO - INÍCIO"
-Write-Host "============================================="
+# Caminho UNC completo
+$UNC = "\\$NetworkSourceServer\$NetworkShareName"
 
-$ComputerName = Read-Host "Digite o NOME DE USUÁRIO (p. ex: joao.silva) para nomear a máquina"
-if ([string]::IsNullOrWhiteSpace($ComputerName)) {
-    Write-Error "Nome de usuário não pode ser vazio."
-    exit 1
+# Caminho real da origem (F:\func\TI\TI-Carlos\apps)
+$NetworkSource = Join-Path -Path $MappedDrive -ChildPath $NetworkSourcePath
+
+# -------------------------------------------------------------
+# 1. COLETAR NOME DO USUÁRIO E GERAR NOME DO PC
+# -------------------------------------------------------------
+$UserInput = Read-Host "Digite o NOME DE USUÁRIO (ex: joao.silva)"
+
+if ([string]::IsNullOrWhiteSpace($UserInput)) {
+    Write-Host "ERRO: Nome não pode ser vazio." -ForegroundColor Red
+    Exit 1
 }
-$NewComputerName = "PC-" + $ComputerName.ToUpper().Replace('.', '-')
-Write-Host "Novo nome da máquina será: $NewComputerName"
 
-Write-Host "`n>> CREDENCIAIS DO AD <<"
-Write-Host "Insira as credenciais de um usuário com permissão para juntar ao domínio $Domain_Name."
-$ADUser = Read-Host "Usuário (p. ex: admin_ad)"
+$NewComputerName = "PC-$($UserInput.ToUpper().Replace('.', '-'))"
+Write-Host "Nome da máquina definido como: $NewComputerName" -ForegroundColor Green
+
+# -------------------------------------------------------------
+# 2. CREDENCIAIS DO AD
+# -------------------------------------------------------------
+Write-Host "`nDigite credenciais com permissão para ingressar no domínio $Domain_Name:"
+$ADUser     = Read-Host "Usuário (ex: admin_ad)"
 $ADPassword = Read-Host -AsSecureString "Senha"
-$ADCredential = New-Object System.Management.Automation.PSCredential($ADUser, $ADPassword)
 
-# ====================================================
-# SEÇÃO 2 (CONFIGURAÇÃO DE REDE) FOI REMOVIDA.
-# O script assume que a rede j?? est?? funcional.
-# ====================================================
+$ADCredential = New-Object System.Management.Automation.PSCredential ($ADUser, $ADPassword)
 
-# ----------------------------------------------------
-# 3. MAPEAMENTO DO DRIVE F:
-# ----------------------------------------------------
-Write-Host "`n--- 3. MAPEANDO DRIVE $MAPPED_DRIVE_LETTER ---"
+# -------------------------------------------------------------
+# 3. MAPEAR DRIVE F:
+# -------------------------------------------------------------
+Write-Host "`n--- 3. MAPEANDO DRIVE F: ---" -ForegroundColor Yellow
 
 try {
-    # Remove qualquer mapeamento F: existente
-    (New-Object -ComObject WScript.Network).RemoveNetworkDrive($MAPPED_DRIVE_LETTER, $true, $true) | Out-Null
-    
-    # Mapeia o drive F:
-    (New-Object -ComObject WScript.Network).MapNetworkDrive($MAPPED_DRIVE_LETTER, $FullUNCPathToShare)
-    # Concatenação segura para exibir a letra do drive
-    Write-Host "Drive " + $MAPPED_DRIVE_LETTER + ": mapeado para $FullUNCPathToShare com sucesso." 
+    $WshNetwork = New-Object -ComObject WScript.Network
+    $WshNetwork.RemoveNetworkDrive($MappedDrive, $true, $true) 2>$null
+    $WshNetwork.MapNetworkDrive($MappedDrive, $UNC)
 
-} catch {
-    Write-Error "ERRO: Falha ao mapear o drive $MAPPED_DRIVE_LETTER. O script ir?? tentar acessar o caminho mesmo assim."
+    Write-Host "Drive F: mapeado com sucesso → $UNC" -ForegroundColor Green
+}
+catch {
+    Write-Host "ERRO: Não foi possível mapear F:. Tentando acesso direto ao UNC." -ForegroundColor Red
 }
 
-# ----------------------------------------------------
-# 4. CÓPIA DOS ARQUIVOS DE INSTALAÇÃO (DO DRIVE F:)
-# ----------------------------------------------------
-Write-Host "`n--- 4. COPIANDO ARQUIVOS DE INSTALAÇÃO DE $NetworkSource ---"
+# -------------------------------------------------------------
+# 4. CÓPIA DOS ARQUIVOS
+# -------------------------------------------------------------
+Write-Host "`n--- 4. COPIANDO ARQUIVOS ---" -ForegroundColor Yellow
+
+# Criar pastas
+New-Item -Path $DestERP, $DestRetaguarda, $DestApps -ItemType Directory -Force | Out-Null
+
+# Verifica se a pasta existe
+if (-Not (Test-Path $NetworkSource)) {
+    Write-Host "ERRO FATAL: Caminho não encontrado → $NetworkSource" -ForegroundColor Red
+    Exit 1
+}
 
 try {
-    # 4a. Cria diretórios de destino
-    New-Item -Path $DestERP, $DestRetaguarda, $DestApps -ItemType Directory -Force | Out-Null
-    
-    # 4b. Copia Pastas Específicas para C:\ (ERP e RETAGUARDA)
-    Write-Host "Copiando ERP e RETAGUARDA..."
-    Copy-Item -Path "$NetworkSource\erp" -Destination $DestERP -Recurse -Force -ErrorAction Stop
-    Copy-Item -Path "$NetworkSource\retaguarda" -Destination $DestRetaguarda -Recurse -Force -ErrorAction Stop
+    Write-Host "Copiando pasta ERP..." -ForegroundColor Cyan
+    Copy-Item -Path (Join-Path $NetworkSource "erp") -Destination $DestERP -Recurse -Force
 
-    # 4c. Copia o Resto (arquivos e outras pastas) para Public\Desktop\apps
-    Write-Host "Copiando demais arquivos/pastas para Área de Trabalho Pública..."
-    
-    # Filtra tudo exceto 'erp' e 'retaguarda'
-    Get-ChildItem -Path $NetworkSource -Exclude "erp", "retaguarda" | ForEach-Object {
-        Copy-Item -Path $_.FullName -Destination $DestApps -Recurse -Force -ErrorAction Stop
-    }
+    Write-Host "Copiando pasta RETAGUARDA..." -ForegroundColor Cyan
+    Copy-Item -Path (Join-Path $NetworkSource "retaguarda") -Destination $DestRetaguarda -Recurse -Force
 
-    Write-Host "Cópia de arquivos concluída. Programas prontos para o novo usuário de domínio."
-} catch {
-    Write-Error "ERRO FATAL: Falha ao acessar ou copiar arquivos de $NetworkSource. O script não pode continuar."
-    exit 1
+    Write-Host "Copiando demais apps para Desktop Público..." -ForegroundColor Cyan
+    Get-ChildItem -Path $NetworkSource -Exclude "erp", "retaguarda" |
+        ForEach-Object {
+            Copy-Item -Path $_.FullName -Destination $DestApps -Recurse -Force
+        }
+
+    Write-Host "Cópias concluídas com sucesso!" -ForegroundColor Green
+}
+catch {
+    Write-Host "ERRO FATAL AO COPIAR ARQUIVOS: $($_.Exception.Message)" -ForegroundColor Red
+    Exit 1
 }
 
-# ----------------------------------------------------
-# 5. JUNÇÃO AO DOMÍNIO E REINICIALIZAÇÃO
-# ----------------------------------------------------
-Write-Host "`n--- 5. JUNÇÃO AO DOMÍNIO E REINICIALIZAÇÃO ---"
+# -------------------------------------------------------------
+# 5. INGRESSAR NO AD + RENOMEAR + REINICIAR
+# -------------------------------------------------------------
+Write-Host "`n--- 5. INGRESSANDO NO DOMÍNIO ---" -ForegroundColor Yellow
 
 try {
-    # Tenta juntar ao domínio e alterar o nome. O -Restart garante a aplicação e o encerramento do script.
-    Add-Computer -DomainName $Domain_Name -NewName $NewComputerName -Credential $ADCredential -Restart
-    
-    Write-Host "Comando de junção ao domínio $Domain_Name enviado. A máquina será reiniciada em breve."
-    
-} catch {
-    Write-Error "ERRO FATAL: Falha ao ingressar no domínio. Verifique as credenciais ou a conectividade com o DNS $AD_Server_IP."
-    Write-Host "O script terminou, mas a máquina não ingressou no domínio."
-    exit 1
+    Add-Computer -DomainName $Domain_Name -NewName $NewComputerName -Credential $ADCredential -Restart -Force
+}
+catch {
+    Write-Host "ERRO: Falha ao ingressar no domínio." -ForegroundColor Red
+    Write-Host $_.Exception.Message -ForegroundColor Red
+    Exit 1
 }
 
-# FIM DO SCRIPT
+# -------------------------------------------------------------
+#  FIM
+# -------------------------------------------------------------
