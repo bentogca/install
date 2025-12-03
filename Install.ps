@@ -15,7 +15,7 @@ $NetworkShareName = "Conexo"
 $NetworkSourcePath = "\func\TI\TI-Carlos\apps"
 $MAPPED_DRIVE_LETTER = "F"
 $FullUNCPathToShare = "\\$NetworkSourceServer\$NetworkShareName"
-# CORRIGIDO: Uso de ${} para tratar o ':' como caractere literal e não como escopo de variável.
+# CORRIGIDO: Uso de ${} para tratar o ':' corretamente.
 $NetworkSource = "${MAPPED_DRIVE_LETTER}:\$NetworkSourcePath"
 
 # Configuração de Rede e AD
@@ -28,7 +28,7 @@ $AD_Server_IP = "172.16.2.85"
 # --- VARIÁVEIS DE DESTINO ---
 $DestERP = "C:\erp"
 $DestRetaguarda = "C:\retaguarda"
-# Copia para a área de trabalho PÚBLICA (todos os usuários do domínio têm acesso)
+# Copia para a área de trabalho PÚBLICA (acessível por todos os usuários do domínio)
 $DestApps = "C:\Users\Public\Desktop\apps" 
 
 # ----------------------------------------------------
@@ -53,164 +53,38 @@ $ADPassword = Read-Host -AsSecureString "Senha"
 $ADCredential = New-Object System.Management.Automation.PSCredential($ADUser, $ADPassword)
 
 # ----------------------------------------------------
-# 2. CONFIGURAR REDE (IP Fixo e DNS)
+# 2. CONFIGURAR REDE (IP Fixo e DNS) - LÓGICA APRIMORADA
 # ----------------------------------------------------
 Write-Host "`n--- 2. CONFIGURANDO REDE IP FIXO ---"
-$Interface = Get-NetAdapter | Where-Object {$_.Status -eq "Up" -and $_.Name -notlike "*Virtual*"} | Select-Object -First 1
+
+# Tenta localizar uma interface Ethernet física que não seja virtual ou Wi-Fi.
+$Interface = Get-NetAdapter | Where-Object {
+    $_.InterfaceType -eq "Ethernet" -and $_.Name -notlike "*Virtual*" -and $_.Name -notlike "*Wi-Fi*"
+} | Select-Object -First 1
 
 if ($Interface) {
-    Write-Host "Interface detectada: $($Interface.Name)"
+    Write-Host "Interface detectada: $($Interface.Name) (Index: $($Interface.IfIndex))"
     
-    # Remove qualquer IP/DNS existente
-    Get-NetIPAddress -InterfaceIndex $Interface.IfIndex -ErrorAction SilentlyContinue | Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue
+    # 2.1. Limpeza de configurações antigas
+    Get-NetIPAddress -InterfaceIndex $Interface.IfIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue
     Get-DnsClientServerAddress -InterfaceIndex $Interface.IfIndex -ErrorAction SilentlyContinue | Set-DnsClientServerAddress -ServerAddresses ("") -Confirm:$false -ErrorAction SilentlyContinue
     
-    # Define o IP Fixo, Gateway e DNS
-    New-NetIPAddress -InterfaceIndex $Interface.IfIndex -IPAddress $IP_Address -PrefixLength $Subnet_Mask_CIDR -DefaultGateway $Gateway -ErrorAction Stop
-    Set-DnsClientServerAddress -InterfaceIndex $Interface.IfIndex -ServerAddresses $AD_Server_IP -ErrorAction Stop
+    # 2.2. Define o IP Fixo, Gateway e DNS
+    Write-Host "Aplicando IP $IP_Address / DNS $AD_Server_IP..."
     
-    Write-Host "Rede configurada: IP $IP_Address, DNS $AD_Server_IP."
-} else {
-    Write-Error "AVISO: Nenhuma interface de rede ativa encontrada. Pulando configuração de IP."
-}
-
-# ----------------------------------------------------
-# 3. MAPEAMENTO DO DRIVE F:
-# ----------------------------------------------------
-Write-Host "`n--- 3. MAPEANDO DRIVE ${MAPPED_DRIVE_LETTER} ---"
-
-try {
-    # Remove qualquer mapeamento F: existente
-    (New-Object -ComObject WScript.Network).RemoveNetworkDrive($MAPPED_DRIVE_LETTER, $true, $true) | Out-Null
-    
-    # Mapeia o drive F:
-    (New-Object -ComObject WScript.Network).MapNetworkDrive($MAPPED_DRIVE_LETTER, $FullUNCPathToShare)
-    # CORRIGIDO: Uso de ${} na variável MAPPED_DRIVE_LETTER
-    Write-Host "Drive ${MAPPED_DRIVE_LETTER}: mapeado para $FullUNCPathToShare com sucesso." 
-
-} catch {
-    Write-Error "ERRO: Falha ao mapear o drive $MAPPED_DRIVE_LETTER. O script irá tentar acessar o caminho mesmo assim."
-}
-
-# ----------------------------------------------------
-# 4. CÓPIA DOS ARQUIVOS DE INSTALAÇÃO (DO DRIVE F:)
-# ----------------------------------------------------
-Write-Host "`n--- 4. COPIANDO ARQUIVOS DE INSTALAÇÃO DE $NetworkSource ---"
-
-try {
-    # 4a. Cria diretórios de destino
-    New-Item -Path $DestERP, $DestRetaguarda, $DestApps -ItemType Directory -Force | Out-Null
-    
-    # 4b. Copia Pastas Específicas para C:\ (ERP e RETAGUARDA)
-    Write-Host "Copiando ERP e RETAGUARDA..."
-    Copy-Item -Path "$NetworkSource\erp" -Destination $DestERP -Recurse -Force -ErrorAction Stop
-    Copy-Item -Path "$NetworkSource\retaguarda" -Destination $DestRetaguarda -Recurse -Force -ErrorAction Stop
-
-    # 4c. Copia o Resto (arquivos e outras pastas) para Public\Desktop\apps
-    Write-Host "Copiando demais arquivos/pastas para Área de Trabalho Pública..."
-    
-    # Filtra tudo exceto 'erp' e 'retaguarda'
-    Get-ChildItem -Path $NetworkSource -Exclude "erp", "retaguarda" | ForEach-Object {
-        Copy-Item -Path $_.FullName -Destination $DestApps -Recurse -Force -ErrorAction Stop
+    try {
+        New-NetIPAddress -InterfaceIndex $Interface.IfIndex -IPAddress $IP_Address -PrefixLength $Subnet_Mask_CIDR -DefaultGateway $Gateway -ErrorAction Stop
+        Set-DnsClientServerAddress -InterfaceIndex $Interface.IfIndex -ServerAddresses $AD_Server_IP -ErrorAction Stop
+        
+        Write-Host "✅ Rede configurada com sucesso!"
+    } catch {
+        Write-Error "ERRO GRAVE: Falha ao aplicar o IP Fixo ou DNS. Verifique o status da interface de rede."
+        exit 1
     }
 
-    Write-Host "Cópia de arquivos concluída. Programas prontos para o novo usuário de domínio."
-} catch {
-    Write-Error "ERRO FATAL: Falha ao acessar ou copiar arquivos de $NetworkSource. O script não pode continuar."
-    exit 1
-}
-
-# ----------------------------------------------------
-# 5. JUNÇÃO AO DOMÍNIO E REINICIALIZAÇÃO
-# ----------------------------------------------------
-Write-Host "`n--- 5. JUNÇÃO AO DOMÍNIO E REINICIALIZAÇÃO ---"
-
-try {
-    # Tenta juntar ao domínio e alterar o nome. O -Restart garante a aplicação e o encerramento do script.
-    Add-Computer -DomainName $Domain_Name -NewName $NewComputerName -Credential $ADCredential -Restart
-    
-    Write-Host "Comando de junção ao domínio $Domain_Name enviado. A máquina será reiniciada em breve."
-    
-} catch {
-    Write-Error "ERRO FATAL: Falha ao ingressar no domínio. Verifique as credenciais ou a conectividade com o DNS $AD_Server_IP."
-    Write-Host "O script terminou, mas a máquina não ingressou no domínio."
-    exit 1
-}
-
-# FIM DO SCRIPT# ====================================================================
-# SCRIPT DE AUTO INSTALAÇÃO, REDE E DOMÍNIO (PowerShell)
-# --------------------------------------------------------------------
-# DEVE SER EXECUTADO COMO ADMINISTRADOR!
-# O script irá configurar a rede, mapear o drive F:, copiar os arquivos, 
-# juntar ao AD e REINICIAR.
-# ====================================================================
-
-# --------------------------------------------------------------------
-# --- CONFIGURAÇÕES FIXAS DA INFRAESTRUTURA ---
-# --------------------------------------------------------------------
-# Configuração do Mapeamento F:
-$NetworkSourceServer = "172.16.2.73"
-$NetworkShareName = "Conexo"
-$NetworkSourcePath = "\func\TI\TI-Carlos\apps"
-$MAPPED_DRIVE_LETTER = "F"
-$FullUNCPathToShare = "\\$NetworkSourceServer\$NetworkShareName"
-# CORRIGIDO: Uso de ${} para tratar o ':' como caractere literal e não como escopo de variável.
-$NetworkSource = "${MAPPED_DRIVE_LETTER}:\$NetworkSourcePath"
-
-# Configuração de Rede e AD
-$IP_Address = "172.16.0.95"
-$Subnet_Mask_CIDR = 24
-$Gateway = "172.16.0.254"
-$Domain_Name = "atacado.local"
-$AD_Server_IP = "172.16.2.85" 
-
-# --- VARIÁVEIS DE DESTINO ---
-$DestERP = "C:\erp"
-$DestRetaguarda = "C:\retaguarda"
-# Copia para a área de trabalho PÚBLICA (todos os usuários do domínio têm acesso)
-$DestApps = "C:\Users\Public\Desktop\apps" 
-
-# ----------------------------------------------------
-# 1. COLETAR INFORMAÇÕES DO USUÁRIO
-# ----------------------------------------------------
-Write-Host "============================================="
-Write-Host "  ASSISTENTE DE CONFIGURAÇÃO - INÍCIO"
-Write-Host "============================================="
-
-$ComputerName = Read-Host "Digite o NOME DE USUÁRIO (p. ex: joao.silva) para nomear a máquina"
-if ([string]::IsNullOrWhiteSpace($ComputerName)) {
-    Write-Error "Nome de usuário não pode ser vazio."
-    exit 1
-}
-$NewComputerName = "PC-" + $ComputerName.ToUpper().Replace('.', '-')
-Write-Host "Novo nome da máquina será: $NewComputerName"
-
-Write-Host "`n>> CREDENCIAIS DO AD <<"
-Write-Host "Insira as credenciais de um usuário com permissão para juntar ao domínio $Domain_Name."
-$ADUser = Read-Host "Usuário (p. ex: admin_ad)"
-$ADPassword = Read-Host -AsSecureString "Senha"
-$ADCredential = New-Object System.Management.Automation.PSCredential($ADUser, $ADPassword)
-
-# ----------------------------------------------------
-# 2. CONFIGURAR REDE (IP Fixo e DNS)
-# ----------------------------------------------------
-Write-Host "`n--- 2. CONFIGURANDO REDE IP FIXO ---"
-$Interface = Get-NetAdapter | Where-Object {$_.Status -eq "Up" -and $_.Name -notlike "*Virtual*"} | Select-Object -First 1
-
-if ($Interface) {
-    Write-Host "Interface detectada: $($Interface.Name)"
-    
-    # Remove qualquer IP/DNS existente
-    Get-NetIPAddress -InterfaceIndex $Interface.IfIndex -ErrorAction SilentlyContinue | Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue
-    Get-DnsClientServerAddress -InterfaceIndex $Interface.IfIndex -ErrorAction SilentlyContinue | Set-DnsClientServerAddress -ServerAddresses ("") -Confirm:$false -ErrorAction SilentlyContinue
-    
-    # Define o IP Fixo, Gateway e DNS
-    New-NetIPAddress -InterfaceIndex $Interface.IfIndex -IPAddress $IP_Address -PrefixLength $Subnet_Mask_CIDR -DefaultGateway $Gateway -ErrorAction Stop
-    Set-DnsClientServerAddress -InterfaceIndex $Interface.IfIndex -ServerAddresses $AD_Server_IP -ErrorAction Stop
-    
-    Write-Host "Rede configurada: IP $IP_Address, DNS $AD_Server_IP."
 } else {
-    Write-Error "AVISO: Nenhuma interface de rede ativa encontrada. Pulando configuração de IP."
+    Write-Error "ERRO FATAL: Nenhuma interface de rede Ethernet válida foi encontrada. O cabo pode não estar conectado."
+    exit 1
 }
 
 # ----------------------------------------------------
