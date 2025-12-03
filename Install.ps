@@ -1,9 +1,10 @@
 # ====================================================================
-# SCRIPT DE AUTO INSTALAÇÃO, REDE E DOMÍNIO (PowerShell)
+# SCRIPT DE AUTO INSTALAÇÃO, SEM CONFIGURAÇÃO DE REDE
 # --------------------------------------------------------------------
 # DEVE SER EXECUTADO COMO ADMINISTRADOR!
-# O script irá configurar a rede, mapear o drive F:, copiar os arquivos, 
+# O script irá nomear a máquina, mapear o drive F:, copiar os arquivos, 
 # juntar ao AD e REINICIAR.
+# A CONFIGURAÇÃO DE IP (SEÇÃO 2) FOI REMOVIDA.
 # ====================================================================
 
 # --------------------------------------------------------------------
@@ -15,11 +16,11 @@ $NetworkShareName = "Conexo"
 $NetworkSourcePath = "\func\TI\TI-Carlos\apps"
 $MAPPED_DRIVE_LETTER = "F"
 $FullUNCPathToShare = "\\$NetworkSourceServer\$NetworkShareName"
-# CORRIGIDO: Uso de operador '+' (concatenação) para evitar erro de análise de drive.
+# Uso de operador '+' (concatenação) para evitar erro de análise de drive.
 $NetworkSource = $MAPPED_DRIVE_LETTER + ":\" + $NetworkSourcePath
 
-# Configuração de Rede e AD
-$IP_Address = "172.16.0.95"
+# Configuração de Rede e AD (Variáveis mantidas para o Domain Join)
+$IP_Address = "172.16.0.95" # Não será aplicado na interface
 $Subnet_Mask_CIDR = 24
 $Gateway = "172.16.0.254"
 $Domain_Name = "atacado.local"
@@ -53,63 +54,10 @@ $ADPassword = Read-Host -AsSecureString "Senha"
 $ADCredential = New-Object System.Management.Automation.PSCredential($ADUser, $ADPassword)
 
 # ====================================================
-# 2. CONFIGURAR REDE (IP Fixo e DNS) - SELEÇÃO MANUAL
+# SEÇÃO 2 (CONFIGURAÇÃO DE REDE) FOI REMOVIDA.
+# O script assume que a rede j?? est?? funcional.
 # ====================================================
-Write-Host "`n--- 2. CONFIGURANDO REDE IP FIXO ---"
 
-# --- VERIFICAÇÃO DE IP EXISTENTE ---
-$ExistingIP = Get-NetIPAddress -IPAddress $IP_Address -ErrorAction SilentlyContinue
-
-if ($ExistingIP) {
-    Write-Host "✅ O IP ($IP_Address) j?? est?? configurado na interface $($ExistingIP.InterfaceAlias). Pulando configura????o de rede."
-} else {
-    Write-Host "O IP ($IP_Address) N??O foi encontrado. ?? necess??rio configurar a interface."
-
-    # Lista TODAS as interfaces de rede detect??veis, excluindo apenas Virtual e Loopback, para escolha.
-    $Adapters = Get-NetAdapter | Where-Object { 
-        $_.Name -notlike "*Virtual*" -and $_.Name -notlike "*Loopback*" 
-    } | Select-Object Name, Status, MacAddress, InterfaceType
-
-    if (-not $Adapters) {
-        Write-Host "AVISO: Nenhuma interface de rede foi detectada no sistema. O script CONTINUAR??, mas as etapas de rede falhar??o."
-    }
-
-    Write-Host "Interfaces de Rede Encontradas (Escolha a principal):"
-    $Adapters | Format-Table -AutoSize
-
-    # Pede ao usu??rio para selecionar pelo nome
-    $SelectedName = Read-Host "Digite o NOME EXATO da interface que deseja configurar (ex: Ethernet ou Wi-Fi)"
-
-    # Tenta encontrar a interface pelo nome fornecido
-    $Interface = Get-NetAdapter -Name $SelectedName -ErrorAction SilentlyContinue | Select-Object -First 1
-
-    if ($Interface) {
-        Write-Host "Interface selecionada: $($Interface.Name) (Index: $($Interface.IfIndex))"
-        
-        # 2.1. Limpeza de configura????es antigas
-        Write-Host "Limpando configura????es de rede antigas..."
-        Get-NetIPAddress -InterfaceIndex $Interface.IfIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue
-        Get-DnsClientServerAddress -InterfaceIndex $Interface.IfIndex -ErrorAction SilentlyContinue | Set-DnsClientServerAddress -ServerAddresses ("") -Confirm:$false -ErrorAction SilentlyContinue
-        
-        # 2.2. Define o IP Fixo, Gateway e DNS
-        Write-Host "Aplicando IP $IP_Address / DNS $AD_Server_IP..."
-        
-        try {
-            New-NetIPAddress -InterfaceIndex $Interface.IfIndex -IPAddress $IP_Address -PrefixLength $Subnet_Mask_CIDR -DefaultGateway $Gateway -ErrorAction Stop
-            Set-DnsClientServerAddress -InterfaceIndex $Interface.IfIndex -ServerAddresses $AD_Server_IP -ErrorAction Stop
-            
-            Write-Host "✅ Rede configurada com sucesso!"
-        } catch {
-            Write-Error "ERRO GRAVE: Falha ao aplicar o IP Fixo ou DNS. O script continuará a execução."
-        }
-
-    } else {
-        Write-Error "AVISO: O nome digitado '$SelectedName' não corresponde a nenhuma interface ou não foi possível configurá-la. O script CONTINUARÁ."
-    }
-}
-# ====================================================
-# FIM DA SEÇÃO 2
-# ====================================================
 # ----------------------------------------------------
 # 3. MAPEAMENTO DO DRIVE F:
 # ----------------------------------------------------
@@ -121,11 +69,11 @@ try {
     
     # Mapeia o drive F:
     (New-Object -ComObject WScript.Network).MapNetworkDrive($MAPPED_DRIVE_LETTER, $FullUNCPathToShare)
-    # CORRIGIDO: Concatenação segura para exibir a letra do drive
+    # Concatenação segura para exibir a letra do drive
     Write-Host "Drive " + $MAPPED_DRIVE_LETTER + ": mapeado para $FullUNCPathToShare com sucesso." 
 
 } catch {
-    Write-Error "ERRO: Falha ao mapear o drive $MAPPED_DRIVE_LETTER. O script irá tentar acessar o caminho mesmo assim."
+    Write-Error "ERRO: Falha ao mapear o drive $MAPPED_DRIVE_LETTER. O script ir?? tentar acessar o caminho mesmo assim."
 }
 
 # ----------------------------------------------------
@@ -153,7 +101,6 @@ try {
     Write-Host "Cópia de arquivos concluída. Programas prontos para o novo usuário de domínio."
 } catch {
     Write-Error "ERRO FATAL: Falha ao acessar ou copiar arquivos de $NetworkSource. O script não pode continuar."
-    # Mantemos o exit aqui, pois sem a cópia dos arquivos o resto do script não faz sentido.
     exit 1
 }
 
